@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Biboca Ad Player</title>
+  <style>
+    html, body { margin:0; height:100%; background:black; }
+    #overlay {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.85); color: white; font-family: system-ui, sans-serif;
+      cursor: pointer; z-index: 10;
+    }
+    #overlay button {
+      font-size: 1.1rem; padding: 12px 18px; border: 0; border-radius: 10px;
+    }
+    video {
+      width: 100vw; height: 100vh;
+      object-fit: cover;           /* change to 'contain' if you prefer letterboxing */
+      background: black;
+    }
+  </style>
+</head>
+<body>
+
+<div id="overlay">
+  <div>
+    <div style="text-align:center;margin-bottom:14px;">Tap to start fullscreen</div>
+    <div style="text-align:center;"><button id="startBtn">Enter Fullscreen</button></div>
+  </div>
+</div>
+
+<video id="player" autoplay muted playsinline></video>
+
+<script>
+  // ---------- BASIC PASSWORD ----------
+  const password = "biboca123"; // change me
+  const entered = prompt("Enter password:");
+  if (entered !== password) {
+    document.body.innerHTML = "<h1 style='color:white;text-align:center;margin-top:50px;'>Access Denied</h1>";
+    throw new Error("Wrong password");
+  }
+
+  // ---------- CONFIG ----------
+  const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSCmUeDJmsLAW82pw4JeOau8qBbNwzD6QvTae0gnCNoiIYvRNk1HQjwthrD8kDTkj-y4cFFd9hbWQKK/pub?output=csv";
+  const REFRESH_MINUTES = 5; // re-pull playlist every N minutes
+
+  const player = document.getElementById("player");
+  const overlay = document.getElementById("overlay");
+  const startBtn = document.getElementById("startBtn");
+
+  async function fetchCSV() {
+    const res = await fetch(sheetUrl, { cache: "no-store" });
+    const csvText = await res.text();
+
+    // Parse CSV (simple split; works because your URLs have no commas)
+    const rows = csvText.split("\n").map(r => r.split(",").map(c => c.trim()));
+    const headers = rows[0];
+    const idxActive = headers.indexOf("Active");
+    const idxURL = headers.indexOf("AdURL");
+
+    if (idxActive === -1 || idxURL === -1) {
+      console.error("Missing 'Active' or 'AdURL' column.");
+      return [];
+    }
+    // Filter active rows and return URLs
+    return rows.slice(1)
+      .filter(r => (r[idxActive] || "").toUpperCase() === "YES")
+      .map(r => r[idxURL])
+      .filter(Boolean);
+  }
+
+  let playlist = [];
+  let current = 0;
+
+  function playIndex(i) {
+    if (!playlist.length) return;
+    current = (i + playlist.length) % playlist.length;
+    player.src = playlist[current];
+    // Important for some Android TV browsers:
+    player.load();
+    const p = player.play();
+    if (p && p.catch) p.catch(()=>{}); // suppress autoplay warnings
+  }
+
+  player.addEventListener("ended", () => playIndex(current + 1));
+  player.addEventListener("error", () => playIndex(current + 1));
+
+  async function loadAndPlay() {
+    const list = await fetchCSV();
+    if (list.length) {
+      playlist = list;
+      playIndex(0);
+    } else {
+      console.warn("No active ads found.");
+    }
+  }
+
+  // periodic refresh to pick up sheet changes
+  loadAndPlay();
+  setInterval(loadAndPlay, REFRESH_MINUTES * 60 * 1000);
+
+  // ---------- FULLSCREEN HANDLING ----------
+  async function goFullscreen() {
+    try {
+      // Request fullscreen on the document element
+      if (document.fullscreenElement == null) {
+        const el = document.documentElement;
+        if (el.requestFullscreen) await el.requestFullscreen();
+      }
+    } catch(e) {
+      // Some TV browsers just ignore errors
+    }
+    // Hide overlay and ensure playback starts
+    overlay.style.display = "none";
+    // Unmute if you want sound:
+    // player.muted = false;
+    playIndex(current);
+  }
+
+  startBtn.addEventListener("click", goFullscreen);
+  // Also allow pressing Enter on a keyboard/remote:
+  document.addEventListener("keydown", (e) => {
+    if (overlay.style.display !== "none" && (e.key === "Enter" || e.key === " ")) {
+      goFullscreen();
+    }
+  });
+</script>
+
+</body>
+</html>
